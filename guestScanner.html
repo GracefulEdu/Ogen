@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Guest Ticket Scanner</title>
+<style>
+html, body {
+    margin: 0;
+    padding: 0;
+    min-height: 100%;
+    font-family: sans-serif;
+    background: linear-gradient(135deg, #e0f7fa, #f0f0f0);
+}
+
+body {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-start;
+    padding: 20px;
+    box-sizing: border-box;
+}
+
+h1 {
+    text-align: center;
+    margin-bottom: 20px;
+    font-size: 2rem;
+}
+
+/* Video styling */
+#video {
+    width: 90%;
+    max-width: 400px;
+    aspect-ratio: 1/1;
+    background: #000;
+    border-radius: 12px;
+    object-fit: cover;
+    transition: all 0.3s ease-in-out;
+}
+
+/* Result box */
+#resultBox {
+    margin-top: 20px;
+    padding: 16px;
+    width: 90%;
+    max-width: 380px;
+    border-radius: 12px;
+    font-size: 1.1rem;
+    display: block;
+    line-height: 1.5;
+    white-space: normal;
+    opacity: 0;
+    transition: opacity 0.3s ease-in-out;
+}
+#resultBox.show {
+    opacity: 1;
+}
+#typeStrip {
+    height: 6px;
+    border-radius: 6px 6px 0 0;
+    margin-bottom: 10px;
+}
+
+/* Inputs & buttons */
+input, button {
+    margin-top: 15px;
+    padding: 12px;
+    font-size: 1rem;
+    width: 90%;
+    max-width: 380px;
+    border-radius: 8px;
+    border: 1px solid #ccc;
+    box-sizing: border-box;
+}
+
+button {
+    cursor: pointer;
+    transition: transform 0.2s, box-shadow 0.2s;
+}
+button:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+}
+
+/* Glow animations */
+@keyframes flashGlow {
+    0%, 100% { box-shadow: 0 0 0px rgba(255, 215, 0, 0); }
+    50% { box-shadow: 0 0 20px rgba(255, 215, 0, 0.8); }
+}
+@keyframes flashGlowBlue {
+    0%, 100% { box-shadow: 0 0 0px rgba(51, 153, 255, 0); }
+    50% { box-shadow: 0 0 20px rgba(51, 153, 255, 0.8); }
+}
+.flash-vip { animation: flashGlow 0.6s ease-in-out 3; }
+.flash-normal { animation: flashGlowBlue 0.6s ease-in-out 1; }
+
+/* Responsive typography */
+@media (max-width: 768px) {
+    h1 { font-size: 1.8rem; }
+    input, button, #resultBox, #video { width: 95%; max-width: none; }
+}
+
+@media (min-width: 900px) {
+    h1 { font-size: 2.5rem; }
+    input, button, #resultBox, #video { max-width: 400px; }
+}
+</style>
+</head>
+<body>
+
+<h1>Guest Ticket Scanner</h1>
+
+<button id="backHomeBtn" style="background:#2196F3;color:white;border:none;">Back to Home</button>
+
+<video id="video" autoplay></video>
+<div id="resultBox">
+  <div id="typeStrip"></div>
+  Scan a QR code or enter ticket serial...
+</div>
+<button id="rescan">Scan Again</button>
+
+<input type="text" id="ticketCode" placeholder="Enter ticket code">
+<button id="searchBtn">Search Ticket</button>
+
+<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/9.22.1/firebase-app.js";
+import { getFirestore, doc, getDoc, collection, query, where, getDocs } 
+    from "https://www.gstatic.com/firebasejs/9.22.1/firebase-firestore.js";
+import { firebaseConfig } from "./config.js";
+
+document.addEventListener("DOMContentLoaded", () => {
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+
+    const video = document.getElementById("video");
+    const rescanBtn = document.getElementById("rescan");
+    const searchBtn = document.getElementById("searchBtn");
+    const resultBox = document.getElementById("resultBox");
+    const typeStrip = document.getElementById("typeStrip");
+    const backHomeBtn = document.getElementById("backHomeBtn");
+
+    let stream;
+    let scanning = true;
+
+    function startCamera() {
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+            showError("Camera not supported. Use HTTPS.");
+            return;
+        }
+        navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } })
+            .then(s => {
+                stream = s;
+                video.srcObject = stream;
+                video.setAttribute("playsinline", true);
+                scanning = true;
+                rescanBtn.style.display = "none";
+                video.style.border = "none";
+                requestAnimationFrame(scan);
+            })
+            .catch(() => showError("Camera access denied."));
+    }
+
+    function stopCamera() { scanning = false; if(stream) stream.getTracks().forEach(t => t.stop()); }
+    function beep() { const ctx = new AudioContext(); const osc = ctx.createOscillator(); osc.type="square"; osc.frequency.value=1000; osc.connect(ctx.destination); osc.start(); osc.stop(ctx.currentTime+0.2); }
+
+    async function scan() {
+        if (!scanning) return;
+        if (video.readyState === video.HAVE_ENOUGH_DATA) {
+            const canvas = document.createElement("canvas");
+            const ctx = canvas.getContext("2d");
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            ctx.drawImage(video,0,0,canvas.width,canvas.height);
+            const imgData = ctx.getImageData(0,0,canvas.width,canvas.height);
+            const code = jsQR(imgData.data, canvas.width, canvas.height);
+            if (code) {
+                stopCamera();
+                beep();
+                try {
+                    const ref = doc(db, "tickets", code.data);
+                    const snap = await getDoc(ref);
+                    if (snap.exists()) {
+                        const ticket = snap.data();
+                        video.classList.remove("flash-vip","flash-normal");
+                        if(ticket.serial.startsWith("VIP")) video.classList.add("flash-vip");
+                        else video.classList.add("flash-normal");
+                        showSuccess(ticket);
+                    } else { video.style.border="5px solid red"; showError("Ticket not found."); }
+                } catch { video.style.border="5px solid red"; showError("Error checking ticket."); }
+                rescanBtn.style.display = "inline-block";
+                return;
+            }
+        }
+        requestAnimationFrame(scan);
+    }
+
+    backHomeBtn.addEventListener("click",()=>window.location.href="index.html");
+
+    searchBtn.addEventListener("click", async ()=>{
+        const serialNumber = document.getElementById("ticketCode").value.trim();
+        if(!serialNumber) return;
+        try {
+            const ticketsCol = collection(db,"tickets");
+            const q = query(ticketsCol, where("serial","==",serialNumber));
+            const querySnapshot = await getDocs(q);
+            if(querySnapshot.empty) return showError("Ticket not found.");
+            const ticket = querySnapshot.docs[0].data();
+            video.classList.remove("flash-vip","flash-normal");
+            if(ticket.serial.startsWith("VIP")) video.classList.add("flash-vip");
+            else video.classList.add("flash-normal");
+            showSuccess(ticket);
+        } catch { video.style.border="5px solid red"; showError("Error searching ticket."); }
+    });
+
+    rescanBtn.addEventListener("click", ()=>{
+        resultBox.innerHTML='<div id="typeStrip"></div>Scan a QR code or enter ticket serial...';
+        typeStrip.style.background="transparent";
+        resultBox.className="";
+        video.style.border="none";
+        video.classList.remove("flash-vip","flash-normal");
+        startCamera();
+    });
+
+    function showSuccess(ticket){
+        let owner = ticket.owner||"None";
+        let bgColor="#e7ffe7", borderColor="#59c659", textColor="#115511";
+        if(ticket.serial.startsWith("VIP")){ bgColor="#fff7d1"; borderColor="#f0c419"; textColor="#7a5c00"; typeStrip.style.background="#f0c419"; }
+        else if(ticket.serial.startsWith("NORMAL")){ bgColor="#e7f0ff"; borderColor="#3399ff"; textColor="#003366"; typeStrip.style.background="#3399ff"; }
+        else typeStrip.style.background="transparent";
+        resultBox.style.background=bgColor;
+        resultBox.style.border=`2px solid ${borderColor}`;
+        resultBox.style.color=textColor;
+        resultBox.innerHTML=`<div id="typeStrip"></div>
+            Serial: ${ticket.serial}<br>
+            Redeemed: ${ticket.redeemed}<br>
+            Owner: ${owner}`;
+        resultBox.classList.remove("show");
+        setTimeout(()=>resultBox.classList.add("show"),10);
+    }
+
+    function showError(msg){
+        resultBox.style.background="#ffe7e7";
+        resultBox.style.border="2px solid #d95353";
+        resultBox.style.color="#661111";
+        typeStrip.style.background="transparent";
+        resultBox.innerHTML=`<div id="typeStrip"></div>${msg}`;
+        resultBox.classList.remove("show");
+        setTimeout(()=>resultBox.classList.add("show"),10);
+    }
+
+    startCamera();
+});
+</script>
+</body>
+</html>

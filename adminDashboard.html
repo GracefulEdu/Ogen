@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Admin Dashboard</title>
+<style>
+body {
+    font-family: sans-serif;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 20px;
+    margin: 0;
+    background: #f0f0f0;
+    min-height: 100vh;
+    box-sizing: border-box;
+}
+h1 {
+    margin-bottom: 20px;
+    color: #333;
+    text-align: center;
+}
+button {
+    padding: 12px 25px;
+    margin: 10px 5px;
+    font-size: 1rem;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: background 0.3s;
+    color: white;
+}
+button:hover {
+    background: #555;
+}
+.admin-btn { background: #4CAF50; }
+.scan-btn { background: #2196F3; }
+.logout-btn { background: #f44336; }
+
+.view-section {
+    display: none;
+    margin-top: 20px;
+    width: 100%;
+    max-width: 1000px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+#searchInput {
+    width: 90%;
+    max-width: 400px;
+    padding: 10px;
+    margin-bottom: 20px;
+    font-size: 1rem;
+    border-radius: 6px;
+    border: 1px solid #ccc;
+    box-sizing: border-box;
+}
+#ticketList {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    max-height: 60vh; /* scrollable if too long */
+    overflow-y: auto;
+    padding-right: 5px; /* avoid scrollbar overlap */
+}
+.ticket-card {
+    background: white;
+    border-radius: 10px;
+    padding: 12px 15px;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+    word-break: break-word;
+}
+.ticket-card span {
+    display: block;
+    margin-bottom: 5px;
+    font-weight: bold;
+    font-size: 0.95rem;
+}
+
+/* Mobile adjustments */
+@media (max-width: 600px) {
+    button {
+        width: 90%;
+        font-size: 1rem;
+    }
+    #searchInput {
+        width: 95%;
+    }
+    .ticket-card {
+        font-size: 0.9rem;
+        padding: 10px;
+    }
+}
+</style>
+</head>
+<body>
+
+<h1>Admin Dashboard</h1>
+
+<div>
+    <button class="admin-btn" id="viewTicketsBtn">View Tickets</button>
+    <button class="scan-btn" id="advancedScanBtn">Advanced Scan</button>
+    <button class="logout-btn" id="logoutBtn">Logout</button>
+</div>
+
+<div class="view-section" id="ticketsSection">
+    <input type="text" id="searchInput" placeholder="Search by code, serial, or owner">
+    <div id="ticketList"></div>
+</div>
+
+<script type="module">
+import { firebaseConfig } from "./config.js";
+import { initializeApp } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-app.js";
+import { getFirestore, collection, getDocs } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore.js";
+import { getAuth, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-auth.js";
+
+// Initialize Firebase
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+const auth = getAuth(app);
+
+const viewTicketsBtn = document.getElementById("viewTicketsBtn");
+const advancedScanBtn = document.getElementById("advancedScanBtn");
+const logoutBtn = document.getElementById("logoutBtn");
+const ticketsSection = document.getElementById("ticketsSection");
+const ticketList = document.getElementById("ticketList");
+const searchInput = document.getElementById("searchInput");
+
+let tickets = [];
+
+// Admin-only access
+onAuthStateChanged(auth, user => {
+    if(!user) window.location.href = "login.html";
+});
+
+// Show Tickets section
+viewTicketsBtn.addEventListener("click", () => {
+    ticketsSection.style.display = "flex";
+    fetchTickets();
+});
+
+// Go to advanced scan page
+advancedScanBtn.addEventListener("click", () => {
+    window.location.href = "advancedScanner.html";
+});
+
+// Logout functionality
+logoutBtn.addEventListener("click", async () => {
+    await signOut(auth);
+    window.location.href = "login.html";
+});
+
+// Fetch tickets
+async function fetchTickets() {
+    try {
+        const ticketsRef = collection(db, "tickets");
+        const snapshot = await getDocs(ticketsRef);
+        tickets = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        displayTickets(tickets);
+    } catch(err) {
+        console.error("Error fetching tickets:", err);
+    }
+}
+
+// Display tickets in a list
+function displayTickets(ticketsToShow) {
+    ticketList.innerHTML = "";
+    ticketsToShow
+        .sort((a,b) => a.serial.localeCompare(b.serial))
+        .forEach(ticket => {
+            const div = document.createElement("div");
+            div.className = "ticket-card";
+            div.innerHTML = `
+                <span>Ticket Code: ${ticket.id}</span>
+                <span>Serial: ${ticket.serial}</span>
+                <span>Owner: ${ticket.owner || 'None'}</span>
+                <span>Redeemed: ${ticket.redeemed}</span>
+            `;
+            ticketList.appendChild(div);
+        });
+}
+
+// Dynamic search as user types
+searchInput.addEventListener("input", () => {
+    const query = searchInput.value.trim().toLowerCase();
+    if(!query) {
+        displayTickets(tickets);
+        return;
+    }
+    const filtered = tickets.filter(ticket =>
+        (ticket.id && ticket.id.toLowerCase().includes(query)) ||
+        (ticket.serial && ticket.serial.toLowerCase().includes(query)) ||
+        (ticket.owner && ticket.owner.toLowerCase().includes(query))
+    );
+    displayTickets(filtered);
+});
+</script>
+
+</body>
+</html>

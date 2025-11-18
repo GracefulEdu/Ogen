@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Advanced Ticket Scanner</title>
+<style>
+body {
+    font-family: sans-serif;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 20px;
+    margin: 0;
+    background: #f0f0f0;
+}
+h1 {
+    margin-bottom: 20px;
+    text-align: center;
+}
+#video {
+    width: 90vw;
+    max-width: 400px;
+    height: auto;
+    aspect-ratio: 1;
+    background: #000;
+    border-radius: 12px;
+    object-fit: cover;
+}
+#resultBox {
+    margin-top: 20px;
+    padding: 16px;
+    width: 90vw;
+    max-width: 400px;
+    border-radius: 12px;
+    font-size: 1.1rem;
+    display: none;
+    line-height: 1.5;
+    white-space: normal;
+}
+.result-success {
+    background: #e7ffe7;
+    border: 2px solid #59c659;
+    color: #115511;
+}
+.result-error {
+    background: #ffe7e7;
+    border: 2px solid #d95353;
+    color: #661111;
+}
+input, button {
+    margin-top: 15px;
+    padding: 10px;
+    font-size: 1rem;
+    border-radius: 6px;
+    border: 1px solid #ccc;
+}
+button {
+    cursor: pointer;
+}
+#backBtn {
+    padding: 10px 20px;
+    margin-bottom: 20px;
+    font-size: 1rem;
+    border-radius: 6px;
+    background: #4CAF50;
+    color: white;
+    border: none;
+}
+</style>
+</head>
+<body>
+<h1>Advanced Ticket Scanner</h1>
+
+<button id="backBtn">Back to Dashboard</button>
+
+<video id="video" autoplay></video>
+<div id="resultBox">Scan a QR code or enter ticket serial...</div>
+<button id="rescan">Scan Again</button>
+
+<input type="text" id="ticketCode" placeholder="Enter ticket serial">
+<button id="searchBtn">Search Ticket</button>
+<button id="redeemBtn" style="display:none;">Mark as Redeemed</button>
+
+<input type="text" id="ownerInput" placeholder="Enter owner name" style="display:none;">
+<button id="saveOwnerBtn" style="display:none;">Save Owner</button>
+
+<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
+
+<script type="module">
+import { firebaseConfig } from "./config.js";
+import { initializeApp } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-app.js";
+import { getFirestore, doc, getDoc, updateDoc, collection, query, where, getDocs } 
+    from "https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore.js";
+import { getAuth, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-auth.js";
+
+// --- Firebase init ---
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+const auth = getAuth(app);
+
+// --- DOM elements ---
+const video = document.getElementById("video");
+const resultBox = document.getElementById("resultBox");
+const rescanBtn = document.getElementById("rescan");
+const searchBtn = document.getElementById("searchBtn");
+const ticketInput = document.getElementById("ticketCode");
+const redeemBtn = document.getElementById("redeemBtn");
+const ownerInput = document.getElementById("ownerInput");
+const saveOwnerBtn = document.getElementById("saveOwnerBtn");
+const backBtn = document.getElementById("backBtn");
+
+let stream;
+let scanning = true;
+let currentTicketDoc = null;
+let currentTicketData = null;
+
+// --- Admin-only access ---
+onAuthStateChanged(auth, user => {
+    if(!user) window.location.href = "login.html";
+});
+
+// --- Camera ---
+function startCamera() {
+    navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } })
+        .then(s => {
+            stream = s;
+            video.srcObject = stream;
+            video.setAttribute("playsinline", true);
+            scanning = true;
+            rescanBtn.style.display = 'none';
+            requestAnimationFrame(scan);
+        })
+        .catch(() => {
+            resultBox.textContent = "Camera access denied.";
+        });
+}
+
+function stopCamera() {
+    scanning = false;
+    if(stream) stream.getTracks().forEach(track => track.stop());
+}
+
+function beep() {
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const oscillator = audioCtx.createOscillator();
+    oscillator.type = 'square';
+    oscillator.frequency.setValueAtTime(1000, audioCtx.currentTime);
+    oscillator.connect(audioCtx.destination);
+    oscillator.start();
+    oscillator.stop(audioCtx.currentTime + 0.2);
+}
+
+// --- QR Scan ---
+function scan() {
+    if(!scanning) return;
+    if(video.readyState === video.HAVE_ENOUGH_DATA) {
+        const canvas = document.createElement("canvas");
+        const ctx = canvas.getContext("2d");
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const code = jsQR(imageData.data, canvas.width, canvas.height);
+        if(code) {
+            stopCamera();
+            beep();
+            checkTicket(code.data);
+            rescanBtn.style.display = 'inline-block';
+            return;
+        }
+    }
+    requestAnimationFrame(scan);
+}
+
+// --- Check Ticket by ID or Serial ---
+async function checkTicket(input) {
+    try {
+        // Try as document ID first
+        const docRef = doc(db, "tickets", input);
+        const docSnap = await getDoc(docRef);
+        if(docSnap.exists()) {
+            currentTicketDoc = docRef;
+            currentTicketData = docSnap.data();
+            showSuccess(currentTicketData);
+            return;
+        }
+
+        // If not found, try as serial (manual input)
+        const ticketsRef = collection(db, "tickets");
+        const q = query(ticketsRef, where("serial", "==", input));
+        const querySnapshot = await getDocs(q);
+
+        if(!querySnapshot.empty) {
+            const docSnap2 = querySnapshot.docs[0];
+            currentTicketDoc = docSnap2.ref;
+            currentTicketData = docSnap2.data();
+            showSuccess(currentTicketData);
+            return;
+        }
+
+        currentTicketDoc = null;
+        currentTicketData = null;
+        showError("Ticket not found.");
+    } catch {
+        currentTicketDoc = null;
+        currentTicketData = null;
+        showError("Error checking ticket.");
+    }
+}
+
+// --- Render Functions ---
+function showSuccess(ticket) {
+    let owner = ticket.owner || "";
+    resultBox.className = "result-success";
+    resultBox.style.display = "block";
+    resultBox.innerHTML =
+        `Serial: ${ticket.serial}<br>` +
+        `Redeemed: ${ticket.redeemed}<br>` +
+        `Owner: ${owner || 'None'}`;
+
+    redeemBtn.style.display = ticket.redeemed ? "none" : "inline-block";
+
+    if(!owner) {
+        ownerInput.style.display = "inline-block";
+        saveOwnerBtn.style.display = "inline-block";
+        ownerInput.value = "";
+    } else {
+        ownerInput.style.display = "none";
+        saveOwnerBtn.style.display = "none";
+    }
+}
+
+function showError(msg) {
+    resultBox.className = "result-error";
+    resultBox.style.display = "block";
+    resultBox.innerHTML = msg;
+    redeemBtn.style.display = "none";
+    ownerInput.style.display = "none";
+    saveOwnerBtn.style.display = "none";
+}
+
+// --- Event Listeners ---
+searchBtn.addEventListener("click", () => {
+    const serial = ticketInput.value.trim();
+    if(serial) checkTicket(serial);
+});
+
+redeemBtn.addEventListener("click", async () => {
+    if(!currentTicketDoc || !currentTicketData) return;
+    try {
+        await updateDoc(currentTicketDoc, { redeemed: true });
+        currentTicketData.redeemed = true;
+        showSuccess(currentTicketData);
+    } catch {
+        showError("Error marking ticket as redeemed.");
+    }
+});
+
+saveOwnerBtn.addEventListener("click", async () => {
+    if(!currentTicketDoc || !currentTicketData) return;
+    const newOwner = ownerInput.value.trim();
+    if(!newOwner) return alert("Enter a valid owner name.");
+    try {
+        await updateDoc(currentTicketDoc, { owner: newOwner });
+        currentTicketData.owner = newOwner;
+        showSuccess(currentTicketData);
+    } catch {
+        showError("Error saving owner name.");
+    }
+});
+
+rescanBtn.addEventListener("click", () => {
+    resultBox.textContent = 'Scan a QR code or enter ticket serial...';
+    currentTicketDoc = null;
+    currentTicketData = null;
+    startCamera();
+});
+
+backBtn.addEventListener("click", () => {
+    window.location.href = "adminDashboard.html";
+});
+
+// --- Start camera ---
+startCamera();
+</script>
+</body>
+</html>
+

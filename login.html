@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Admin Login</title>
+<style>
+html, body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    font-family: sans-serif;
+    background: #f0f0f0;
+}
+body {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    padding: 20px;
+    box-sizing: border-box;
+}
+h1 {
+    margin-bottom: 30px;
+    text-align: center;
+    font-size: 2rem;
+}
+input {
+    padding: 12px;
+    margin: 10px 0;
+    width: 90vw;
+    max-width: 320px;
+    font-size: 1rem;
+    border-radius: 8px;
+    border: 1px solid #ccc;
+    box-sizing: border-box;
+}
+button {
+    padding: 12px 25px;
+    font-size: 1rem;
+    border: none;
+    border-radius: 8px;
+    background: #4CAF50;
+    color: white;
+    cursor: pointer;
+    transition: background 0.3s;
+    width: 90vw;
+    max-width: 320px;
+    box-sizing: border-box;
+}
+button:hover {
+    background: #45a049;
+}
+#backToHomeBtn {
+    background: #2196F3;
+    margin-bottom: 20px;
+}
+#error {
+    color: red;
+    margin-top: 10px;
+    min-height: 20px;
+    text-align: center;
+    font-size: 0.95rem;
+    word-break: break-word;
+}
+@media (min-width: 600px) {
+    h1 { font-size: 2.2rem; }
+    input, button { font-size: 1.1rem; }
+}
+@media (min-width: 900px) {
+    input, button { max-width: 400px; }
+}
+</style>
+</head>
+<body>
+
+<h1>Admin Login</h1>
+
+<button id="backToHomeBtn">Back to Home</button>
+
+<input type="email" id="email" placeholder="Email">
+<input type="password" id="password" placeholder="Password">
+<button id="loginBtn">Login</button>
+<div id="error"></div>
+
+<!-- Firebase SDKs -->
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+
+<script>
+const backBtn = document.getElementById("backToHomeBtn");
+backBtn.addEventListener("click", () => {
+    window.location.href = "index.html";
+});
+</script>
+
+<script type="module">
+import { firebaseConfig } from "./config.js";
+import { initializeApp } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-app.js";
+import { getAuth, onAuthStateChanged, signInWithEmailAndPassword } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-auth.js";
+
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+
+const loginBtn = document.getElementById("loginBtn");
+const errorDiv = document.getElementById("error");
+
+// Redirect if already logged in
+onAuthStateChanged(auth, user => {
+    if(user) window.location.href = "adminDashboard.html";
+});
+
+// Login
+loginBtn.addEventListener("click", () => {
+    const email = document.getElementById("email").value.trim();
+    const password = document.getElementById("password").value.trim();
+
+    if(!email || !password) {
+        errorDiv.textContent = "Please enter email and password";
+        return;
+    }
+
+    signInWithEmailAndPassword(auth, email, password)
+        .then(() => window.location.href = "adminDashboard.html")
+        .catch(err => errorDiv.textContent = "Login failed: " + err.message);
+});
+</script>
+
+</body>
+</html>
